@@ -73,12 +73,12 @@ where
     fn call(&mut self, req: Request<B>) -> Self::Future {
         let mut inner = self.inner.clone();
         Box::pin(async move {
-            info!(
-                "finished processing request {} {}",
-                req.method(),
-                req.uri().path()
-            );
-            inner.call(req).await
+            let method = req.method().clone();
+            let path = req.uri().path().to_string();
+            info!("start processing request {} {}", method, path);
+            let response = inner.call(req).await;
+            info!("complete processing request {} {}", method, path);
+            response
         })
     }
 }
