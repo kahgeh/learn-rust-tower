@@ -1,8 +1,11 @@
 use std::{convert::Infallible, net::SocketAddr, task::Poll};
 
-use futures::future::{ready, BoxFuture, Ready};
-
+use futures::{
+    future::{ready, Ready},
+    Future,
+};
 use hyper::{service::make_service_fn, Body, Request, Response, Server};
+use pin_project::pin_project;
 use tower::Service;
 use tracing::info;
 use tracing_subscriber::fmt;
@@ -64,21 +67,51 @@ where
 
     type Error = S::Error;
 
-    type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
+    type Future = LoggingFuture<S::Future>;
 
     fn poll_ready(&mut self, cx: &mut std::task::Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.inner.poll_ready(cx)
     }
 
     fn call(&mut self, req: Request<B>) -> Self::Future {
-        let mut inner = self.inner.clone();
-        Box::pin(async move {
-            let method = req.method().clone();
-            let path = req.uri().path().to_string();
-            info!("start processing request {} {}", method, path);
-            let response = inner.call(req).await;
-            info!("complete processing request {} {}", method, path);
-            response
-        })
+        let method = req.method().clone();
+        let path = req.uri().path().to_string();
+
+        let f = LoggingFuture {
+            future: self.inner.call(req),
+            method,
+            path,
+        };
+
+        f
+    }
+}
+
+#[pin_project]
+struct LoggingFuture<F> {
+    #[pin]
+    future: F,
+    path: String,
+    method: hyper::Method,
+}
+
+impl<F> Future for LoggingFuture<F>
+where
+    F: Future,
+{
+    type Output = F::Output;
+
+    fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        let this = self.project();
+        info!("start processing request {} {}", this.method, this.path);
+
+        let res = match this.future.poll(cx) {
+            Poll::Ready(res) => res,
+            Poll::Pending => return Poll::Pending,
+        };
+
+        info!("complete processing request {} {}", this.method, this.path);
+
+        Poll::Ready(res)
     }
 }
