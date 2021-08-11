@@ -1,20 +1,36 @@
-use std::{convert::Infallible, net::SocketAddr, task::Poll};
+use std::{
+    convert::Infallible,
+    net::SocketAddr,
+    task::Poll,
+    time::{Duration, Instant},
+};
 
 use futures::{
     future::{ready, Ready},
     Future,
 };
-use hyper::{service::make_service_fn, Body, Request, Response, Server};
+use hyper::{
+    service::{make_service_fn, service_fn},
+    Body, Request, Response, Server,
+};
 use pin_project::pin_project;
+use tokio::time::sleep;
 use tower::Service;
 use tracing::info;
 use tracing_subscriber::fmt;
+
+async fn handle(_req: Request<Body>) -> Result<Response<Body>, Infallible> {
+    sleep(Duration::from_secs(5)).await;
+    Ok(Response::new(Body::from("HelloWorld")))
+}
 
 #[tokio::main]
 async fn main() {
     fmt::init();
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
-    let svc = Logging::new(HelloWorld);
+    //let svc = Logging::new(HelloWorld);
+    let svc = service_fn(handle);
+    let svc = Logging::new(svc);
 
     let make_service = make_service_fn(|_con| async move { Ok::<_, Infallible>(svc) });
     let server = Server::bind(&addr).serve(make_service);
@@ -76,11 +92,12 @@ where
     fn call(&mut self, req: Request<B>) -> Self::Future {
         let method = req.method().clone();
         let path = req.uri().path().to_string();
-
+        let start = Instant::now();
         let f = LoggingFuture {
             future: self.inner.call(req),
             method,
             path,
+            start,
         };
 
         f
@@ -93,6 +110,7 @@ struct LoggingFuture<F> {
     future: F,
     path: String,
     method: hyper::Method,
+    start: Instant,
 }
 
 impl<F> Future for LoggingFuture<F>
@@ -110,7 +128,12 @@ where
             Poll::Pending => return Poll::Pending,
         };
 
-        info!("complete processing request {} {}", this.method, this.path);
+        info!(
+            "complete processing request {} {} in {:?}",
+            this.method,
+            this.path,
+            this.start.elapsed()
+        );
 
         Poll::Ready(res)
     }
