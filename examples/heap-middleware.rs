@@ -76,7 +76,7 @@ where
             let method = req.method().clone();
             let path = req.uri().path().to_string();
             info!("start processing request {} {}", method, path);
-            let respose = inner.call(req).await;
+            let response = inner.call(req).await;
             info!("complete processing request {} {}", method, path);
             response
         })
